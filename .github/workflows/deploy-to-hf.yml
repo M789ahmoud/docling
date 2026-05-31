@@ -1,0 +1,58 @@
+name: Deploy to Hugging Face Spaces
+
+  on:
+    push:
+      branches: [main]
+      paths:
+        - "hf-space/**"
+    workflow_dispatch:
+
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Create HF Space (if it does not exist)
+          env:
+            HF_TOKEN: ${{ secrets.HF_TOKEN }}
+            HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          run: |
+            SPACE_NAME="${HF_USERNAME}/docling-api"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer ${HF_TOKEN}" \
+              "https://huggingface.co/api/spaces/${SPACE_NAME}")
+            if [ "$STATUS" = "404" ]; then
+              echo "Creating Space ${SPACE_NAME}..."
+              curl -s -X POST "https://huggingface.co/api/repos/create" \
+                -H "Authorization: Bearer ${HF_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d '{"type":"space","name":"docling-api","sdk":"docker","private":false}'
+            else
+              echo "Space already exists (HTTP $STATUS)"
+            fi
+
+        - name: Push files to HF Space
+          env:
+            HF_TOKEN: ${{ secrets.HF_TOKEN }}
+            HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          run: |
+            git config --global user.email "actions@github.com"
+            git config --global user.name "GitHub Actions"
+
+            SPACE_REPO="https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/docling-api"
+
+            git clone "$SPACE_REPO" hf-deploy
+            cd hf-deploy
+
+            cp ../hf-space/app.py app.py
+            cp ../hf-space/Dockerfile Dockerfile
+            cp ../hf-space/requirements.txt requirements.txt
+            cp ../hf-space/README.md README.md
+
+            git add -A
+            git diff --cached --quiet && echo "No changes to deploy" && exit 0
+            git commit -m "Deploy from GitHub Actions [$GITHUB_SHA]"
+            git push
+            echo "✅ Deployed successfully!"
+  
